@@ -1,0 +1,11 @@
+[package]
+name = "monad"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+members = ["crates/diagnostics"]
+
+resolver = "3"
+
+[dependencies]
