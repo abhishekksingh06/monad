@@ -4,16 +4,13 @@ pub type SourceId = usize;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Span {
-    src: SourceId,
+    pub src: SourceId,
     pub range: Range<usize>,
 }
 
 impl Span {
-    pub fn new(src: SourceId, start: usize, end: usize) -> Self {
-        Self {
-            src,
-            range: start..end,
-        }
+    pub fn new(src: SourceId, range: Range<usize>) -> Self {
+        Self { src, range }
     }
 
     pub fn len(&self) -> usize {

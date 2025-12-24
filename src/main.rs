@@ -1,3 +1,6 @@
+use syntax::lexer::lex;
+
 fn main() {
-    println!("Hello, world!");
+    let tokens = lex(1, "'3'");
+    println!("{:#?}", tokens)
 }

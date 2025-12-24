@@ -9,5 +9,7 @@ resolver = "3"
 
 [workspace.dependencies]
 ariadne = "0.6.0"
+thiserror = "2.0.17"
 
 [dependencies]
+syntax = { path = "crates/syntax" }
