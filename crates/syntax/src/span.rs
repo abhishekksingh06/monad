@@ -55,4 +55,4 @@ impl chumsky::span::Span for Span {
     }
 }
 
-pub type Spanned<T: PartialOrd> = (T, Span);
+pub type Spanned<T> = (T, Span);
