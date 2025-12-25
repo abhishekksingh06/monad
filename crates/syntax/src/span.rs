@@ -1,5 +1,7 @@
 use std::ops::Range;
 
+use miette::SourceSpan;
+
 pub type SourceId = usize;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -22,19 +24,9 @@ impl Span {
     }
 }
 
-impl ariadne::Span for Span {
-    type SourceId = SourceId;
-
-    fn source(&self) -> &Self::SourceId {
-        &self.src
-    }
-
-    fn start(&self) -> usize {
-        self.range.start
-    }
-
-    fn end(&self) -> usize {
-        self.range.end
+impl From<&Span> for SourceSpan {
+    fn from(span: &Span) -> Self {
+        SourceSpan::new(span.range.start.into(), span.range.end - span.range.start)
     }
 }
 
@@ -63,4 +55,4 @@ impl chumsky::span::Span for Span {
     }
 }
 
-pub type Spanned<T> = (T, Span);
+pub type Spanned<T: PartialOrd> = (T, Span);

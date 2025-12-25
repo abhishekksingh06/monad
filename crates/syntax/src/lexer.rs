@@ -1,31 +1,63 @@
+use crate::span::{SourceId, Span, Spanned};
+use internment::Intern;
 use logos::Logos;
+use miette::Diagnostic;
 use thiserror::Error;
 
-use crate::span::{SourceId, Span, Spanned};
-
-#[derive(Debug, Clone, Default, PartialEq, Error)]
+#[derive(Debug, Clone, Default, PartialEq, Error, Diagnostic)]
 pub enum LexError {
-    #[error("invalid integer literal: {0}")]
+    #[error("invalid integer literal")]
+    #[diagnostic(
+        code(lex::invalid_int),
+        help("ensure the integer is within valid range")
+    )]
     InvalidInt(#[from] std::num::ParseIntError),
-    #[error("invalid float literal: {0}")]
+
+    #[error("invalid float literal")]
+    #[diagnostic(
+        code(lex::invalid_float),
+        help("check the float format (e.g., 1.0, 1e10, .5)")
+    )]
     InvalidFloat(#[from] std::num::ParseFloatError),
+
     #[error("character literal cannot be empty")]
+    #[diagnostic(
+        code(lex::empty_char),
+        help("character literals must contain exactly one character, e.g., 'a'")
+    )]
     EmptyChar,
+
     #[error("character literal must contain exactly one character")]
+    #[diagnostic(
+        code(lex::multi_char),
+        help("use a string literal for multiple characters, or keep only one character")
+    )]
     MultiChar,
+
     #[error("unknown escape sequence in character literal")]
+    #[diagnostic(
+        code(lex::unknown_escape),
+        help("valid escape sequences are: \\', \\\\, \\n, \\r, \\t, \\0")
+    )]
     UnknownEscape,
+
     #[error("invalid character literal")]
+    #[diagnostic(code(lex::invalid_char))]
     InvalidChar,
+
     #[default]
     #[error("invalid token")]
+    #[diagnostic(
+        code(lex::invalid_token),
+        help("this character or sequence is not recognized")
+    )]
     InvalidToken,
 }
 
 #[derive(Debug, Clone, PartialEq, PartialOrd, Logos)]
 #[logos(skip r"[ \t\n\f]+")] // skip whitespace
 #[logos(error = LexError)]
-pub enum Token<'src> {
+pub enum Token {
     #[token("fun")]
     KwFun,
     #[token("int")]
@@ -36,6 +68,8 @@ pub enum Token<'src> {
     KwFloat,
     #[token("char")]
     KwChar,
+    #[token("unit")]
+    KwUnit,
     #[token(",")]
     Comma,
     #[token("::")]
@@ -55,11 +89,11 @@ pub enum Token<'src> {
     Bool(bool),
     #[regex(r"'(?:[^'\\\n\r]|\\.)*'", parse_char)]
     Char(char),
-    #[regex(r"[a-z_][a-zA-Z0-9_]*", |lex| lex.slice())]
-    Ident(&'src str),
+    #[regex(r"[a-z_][a-zA-Z0-9_]*", |lex| Intern::new(lex.slice().to_string()))]
+    Ident(Intern<String>),
 }
 
-impl<'src> std::fmt::Display for Token<'src> {
+impl std::fmt::Display for Token {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Token::KwFun => f.write_str("fun"),
@@ -77,11 +111,12 @@ impl<'src> std::fmt::Display for Token<'src> {
             Token::Char(v) => write!(f, "'{v}'"),
             Token::KwFloat => f.write_str("float"),
             Token::KwChar => f.write_str("char"),
+            Token::KwUnit => f.write_str("unit"),
         }
     }
 }
 
-fn parse_char<'src>(lex: &logos::Lexer<'src, Token<'src>>) -> Result<char, LexError> {
+fn parse_char<'src>(lex: &logos::Lexer<'src, Token>) -> Result<char, LexError> {
     let slice = lex.slice();
     let content = &slice[1..slice.len() - 1];
 
@@ -94,11 +129,9 @@ fn parse_char<'src>(lex: &logos::Lexer<'src, Token<'src>>) -> Result<char, LexEr
 
     if first == '\\' {
         let escaped = chars.next();
-
         if chars.next().is_some() {
             return Err(LexError::MultiChar);
         }
-
         match escaped {
             Some('\'') => Ok('\''),
             Some('\\') => Ok('\\'),
@@ -117,18 +150,13 @@ fn parse_char<'src>(lex: &logos::Lexer<'src, Token<'src>>) -> Result<char, LexEr
 }
 
 // Collect all tokens and errors; lexer continues after invalid tokens
-pub fn lex<'src>(
-    src_id: SourceId,
-    input: &'src str,
-) -> Result<Vec<Spanned<Token<'src>>>, Vec<Spanned<LexError>>> {
+pub fn lex(src_id: SourceId, input: &str) -> Result<Vec<Spanned<Token>>, Vec<Spanned<LexError>>> {
     let lexer = Token::lexer(input);
-
     let mut tokens = Vec::new();
     let mut errors = Vec::new();
 
     for (result, range) in lexer.spanned() {
         let span = Span::new(src_id, range);
-
         match result {
             Ok(token) => tokens.push((token, span)),
             Err(err) => errors.push((err, span)),
