@@ -1,6 +1,5 @@
 use crate::span::{SourceId, Span, Spanned};
 use internment::Intern;
-use logos::Logos;
 use miette::Diagnostic;
 use thiserror::Error;
 
@@ -54,119 +53,206 @@ pub enum LexError {
     InvalidToken,
 }
 
-#[derive(Debug, Clone, PartialEq, PartialOrd, Logos)]
-#[logos(skip r"[ \t\n\f]+")] // skip whitespace
-#[logos(error = LexError)]
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum Token {
-    #[token("fun")]
     KwFun,
-    #[token("int")]
     KwInt,
-    #[token("bool")]
     KwBool,
-    #[token("float")]
     KwFloat,
-    #[token("char")]
     KwChar,
-    #[token("unit")]
     KwUnit,
-    #[token(",")]
     Comma,
-    #[token("::")]
     Cons,
-    #[token("=")]
     Eq,
-    #[token("(")]
     LParen,
-    #[token(")")]
     RParen,
-    #[regex(r"[+-]?((\d+\.\d*|\.\d+)([eE][+-]?\d+)?|\d+[eE][+-]?\d+)", |lex| lex.slice().parse())]
     Float(f64),
-    #[regex(r"[0-9]+", |lex| lex.slice().parse())]
     Int(usize),
-    #[token("true", |_| true)]
-    #[token("false", |_| false)]
     Bool(bool),
-    #[regex(r"'(?:[^'\\\n\r]|\\.)*'", parse_char)]
     Char(char),
-    #[regex(r"[a-z_][a-zA-Z0-9_]*", |lex| Intern::new(lex.slice().to_string()))]
     Ident(Intern<String>),
 }
 
-impl std::fmt::Display for Token {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Token::KwFun => f.write_str("fun"),
-            Token::KwInt => f.write_str("int"),
-            Token::KwBool => f.write_str("bool"),
-            Token::Comma => f.write_str(","),
-            Token::Cons => f.write_str("::"),
-            Token::Eq => f.write_str("="),
-            Token::LParen => f.write_str("("),
-            Token::RParen => f.write_str(")"),
-            Token::Ident(v) => f.write_str(v),
-            Token::Int(v) => write!(f, "{v}"),
-            Token::Float(v) => write!(f, "{v}"),
-            Token::Bool(v) => write!(f, "{v}"),
-            Token::Char(v) => write!(f, "'{v}'"),
-            Token::KwFloat => f.write_str("float"),
-            Token::KwChar => f.write_str("char"),
-            Token::KwUnit => f.write_str("unit"),
-        }
-    }
+pub struct Lexer<'src> {
+    src_id: SourceId,
+    chars: std::iter::Peekable<std::str::Chars<'src>>,
+    offset: usize,
 }
 
-fn parse_char<'src>(lex: &logos::Lexer<'src, Token>) -> Result<char, LexError> {
-    let slice = lex.slice();
-    let content = &slice[1..slice.len() - 1];
-
-    if content.is_empty() {
-        return Err(LexError::EmptyChar);
+impl<'src> Lexer<'src> {
+    pub fn new(src_id: SourceId, input: &'src str) -> Self {
+        Self {
+            src_id,
+            chars: input.chars().peekable(),
+            offset: 0,
+        }
     }
 
-    let mut chars = content.chars();
-    let first = chars.next().unwrap();
+    fn next_char(&mut self) -> Option<char> {
+        let c = self.chars.next()?;
+        self.offset += c.len_utf8();
+        Some(c)
+    }
 
-    if first == '\\' {
-        let escaped = chars.next();
-        if chars.next().is_some() {
+    fn peek(&mut self) -> Option<char> {
+        self.chars.peek().copied()
+    }
+
+    fn consume_while<F>(&mut self, mut test: F) -> String
+    where
+        F: FnMut(char) -> bool,
+    {
+        let mut s = String::new();
+        while let Some(c) = self.peek() {
+            if test(c) {
+                s.push(self.next_char().unwrap());
+            } else {
+                break;
+            }
+        }
+        s
+    }
+
+    pub fn tokenize(mut self) -> Result<Vec<Spanned<Token>>, Vec<Spanned<LexError>>> {
+        let mut tokens = Vec::new();
+        let mut errors = Vec::new();
+
+        while let Some(c) = self.peek() {
+            let start = self.offset;
+
+            match c {
+                c if c.is_whitespace() => {
+                    self.next_char();
+                    continue;
+                }
+
+                ',' => {
+                    self.next_char();
+                    tokens.push((Token::Comma, Span::new(self.src_id, start..self.offset)));
+                }
+                '(' => {
+                    self.next_char();
+                    tokens.push((Token::LParen, Span::new(self.src_id, start..self.offset)));
+                }
+                ')' => {
+                    self.next_char();
+                    tokens.push((Token::RParen, Span::new(self.src_id, start..self.offset)));
+                }
+                '=' => {
+                    self.next_char();
+                    tokens.push((Token::Eq, Span::new(self.src_id, start..self.offset)));
+                }
+                ':' => {
+                    self.next_char();
+                    if self.peek() == Some(':') {
+                        self.next_char();
+                        tokens.push((Token::Cons, Span::new(self.src_id, start..self.offset)));
+                    } else {
+                        errors.push((
+                            LexError::InvalidToken,
+                            Span::new(self.src_id, start..self.offset),
+                        ));
+                    }
+                }
+
+                '\'' => match self.lex_char_literal() {
+                    Ok(ch) => {
+                        tokens.push((Token::Char(ch), Span::new(self.src_id, start..self.offset)))
+                    }
+                    Err(e) => errors.push((e, Span::new(self.src_id, start..self.offset))),
+                },
+
+                '0'..='9' | '.' => match self.lex_number() {
+                    Ok(t) => tokens.push((t, Span::new(self.src_id, start..self.offset))),
+                    Err(e) => errors.push((e, Span::new(self.src_id, start..self.offset))),
+                },
+
+                'a'..='z' | '_' => {
+                    let ident = self.consume_while(|c| c.is_alphanumeric() || c == '_');
+                    let token = match ident.as_str() {
+                        "fun" => Token::KwFun,
+                        "int" => Token::KwInt,
+                        "bool" => Token::KwBool,
+                        "float" => Token::KwFloat,
+                        "char" => Token::KwChar,
+                        "unit" => Token::KwUnit,
+                        "true" => Token::Bool(true),
+                        "false" => Token::Bool(false),
+                        _ => Token::Ident(Intern::new(ident)),
+                    };
+                    tokens.push((token, Span::new(self.src_id, start..self.offset)));
+                }
+
+                _ => {
+                    self.next_char();
+                    errors.push((
+                        LexError::InvalidToken,
+                        Span::new(self.src_id, start..self.offset),
+                    ));
+                }
+            }
+        }
+
+        if errors.is_empty() {
+            Ok(tokens)
+        } else {
+            Err(errors)
+        }
+    }
+
+    fn lex_char_literal(&mut self) -> Result<char, LexError> {
+        self.next_char();
+        let c = self.next_char().ok_or(LexError::InvalidChar)?;
+
+        let result = if c == '\\' {
+            let esc = self.next_char().ok_or(LexError::UnknownEscape)?;
+            match esc {
+                '\'' => '\'',
+                '\\' => '\\',
+                'n' => '\n',
+                'r' => '\r',
+                't' => '\t',
+                '0' => '\0',
+                _ => return Err(LexError::UnknownEscape),
+            }
+        } else if c == '\'' {
+            return Err(LexError::EmptyChar);
+        } else {
+            c
+        };
+
+        if self.next_char() != Some('\'') {
             return Err(LexError::MultiChar);
         }
-        match escaped {
-            Some('\'') => Ok('\''),
-            Some('\\') => Ok('\\'),
-            Some('n') => Ok('\n'),
-            Some('r') => Ok('\r'),
-            Some('t') => Ok('\t'),
-            Some('0') => Ok('\0'),
-            Some(_) => Err(LexError::UnknownEscape),
-            None => Err(LexError::UnknownEscape),
+        Ok(result)
+    }
+
+    fn lex_number(&mut self) -> Result<Token, LexError> {
+        let mut has_dot = false;
+        let mut s = String::new();
+
+        while let Some(c) = self.peek() {
+            match c {
+                '.' if !has_dot => {
+                    has_dot = true;
+                    s.push(self.next_char().unwrap());
+                }
+                '0'..='9' => s.push(self.next_char().unwrap()),
+                'e' | 'E' => {
+                    has_dot = true;
+                    s.push(self.next_char().unwrap());
+                    if let Some('+' | '-') = self.peek() {
+                        s.push(self.next_char().unwrap());
+                    }
+                }
+                _ => break,
+            }
         }
-    } else if chars.next().is_none() {
-        Ok(first)
-    } else {
-        Err(LexError::MultiChar)
+
+        if has_dot {
+            s.parse::<f64>().map(Token::Float).map_err(LexError::from)
+        } else {
+            s.parse::<usize>().map(Token::Int).map_err(LexError::from)
+        }
     }
 }
-
-// Collect all tokens and errors; lexer continues after invalid tokens
-pub fn lex(src_id: SourceId, input: &str) -> Result<Vec<Spanned<Token>>, Vec<Spanned<LexError>>> {
-    let lexer = Token::lexer(input);
-    let mut tokens = Vec::new();
-    let mut errors = Vec::new();
-
-    for (result, range) in lexer.spanned() {
-        let span = Span::new(src_id, range);
-        match result {
-            Ok(token) => tokens.push((token, span)),
-            Err(err) => errors.push((err, span)),
-        }
-    }
-
-    if errors.is_empty() {
-        Ok(tokens)
-    } else {
-        Err(errors)
-    }
-}
-

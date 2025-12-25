@@ -30,29 +30,4 @@ impl From<&Span> for SourceSpan {
     }
 }
 
-impl chumsky::span::Span for Span {
-    type Context = SourceId;
-
-    type Offset = usize;
-
-    fn new(context: Self::Context, range: Range<Self::Offset>) -> Self {
-        Self {
-            src: context,
-            range,
-        }
-    }
-
-    fn context(&self) -> Self::Context {
-        self.src
-    }
-
-    fn start(&self) -> Self::Offset {
-        self.range.start
-    }
-
-    fn end(&self) -> Self::Offset {
-        self.range.end
-    }
-}
-
 pub type Spanned<T> = (T, Span);
