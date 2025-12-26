@@ -23,7 +23,7 @@ pub enum Type {
     Int,
     Char,
     Bool,
-    Float,
+    Real,
     Unit,
 }
 
@@ -33,7 +33,7 @@ impl Display for Type {
             Type::Int => "int",
             Type::Char => "char",
             Type::Bool => "bool",
-            Type::Float => "float",
+            Type::Real => "real",
             Type::Unit => "()",
         };
         f.write_str(s)
@@ -41,22 +41,22 @@ impl Display for Type {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Value {
+pub enum Literal {
     Int(usize),
     Char(char),
     Bool(bool),
-    Float(f64),
+    Real(f64),
     Unit,
 }
 
-impl Display for Value {
+impl Display for Literal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Value::Int(v) => write!(f, "{v}"),
-            Value::Char(c) => write!(f, "'{c}'"),
-            Value::Bool(b) => write!(f, "{b}"),
-            Value::Float(x) => write!(f, "{x}"),
-            Value::Unit => write!(f, "()"),
+            Literal::Int(v) => write!(f, "{v}"),
+            Literal::Char(c) => write!(f, "'{c}'"),
+            Literal::Bool(b) => write!(f, "{b}"),
+            Literal::Real(x) => write!(f, "{x}"),
+            Literal::Unit => write!(f, "()"),
         }
     }
 }
@@ -91,9 +91,51 @@ pub enum BorrowOp {
     RefMut, // &mut x
 }
 
+impl Display for BinaryOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            BinaryOp::Sub => "-",
+            BinaryOp::Mul => "*",
+            BinaryOp::Div => "div",
+            BinaryOp::Rem => "mod",
+
+            BinaryOp::Eq => "=",
+            BinaryOp::NotEq => "<>",
+            BinaryOp::Less => "<",
+            BinaryOp::LessEq => "<=",
+            BinaryOp::Greater => ">",
+            BinaryOp::GreaterEq => ">=",
+
+            BinaryOp::And => "&&",
+            BinaryOp::Or => "||",
+        };
+        f.write_str(s)
+    }
+}
+
+impl Display for UnaryOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            UnaryOp::Neg => "~",
+            UnaryOp::Not => "not",
+        };
+        f.write_str(s)
+    }
+}
+
+impl Display for BorrowOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            BorrowOp::Ref => "&",
+            BorrowOp::RefMut => "&mut",
+        };
+        f.write_str(s)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
-    Value(Value),
+    Value(Literal),
     Local(Ident),
     Unary {
         op: Spanned<UnaryOp>,
@@ -116,10 +158,6 @@ pub enum Expr {
         stmts: Vec<Spanned<Stmt>>,
         expr: Box<Spanned<Self>>,
     },
-    While {
-        condition: Box<Spanned<Self>>,
-        expr: Box<Spanned<Self>>,
-    },
     If {
         condition: Box<Spanned<Self>>,
         then_expr: Box<Spanned<Expr>>,
@@ -127,54 +165,23 @@ pub enum Expr {
     },
 }
 
-impl Display for BinaryOp {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = match self {
-            BinaryOp::Sub => "-",
-            BinaryOp::Mul => "*",
-            BinaryOp::Div => "/",
-            BinaryOp::Rem => "%",
-
-            BinaryOp::Eq => "==",
-            BinaryOp::NotEq => "!=",
-            BinaryOp::Less => "<",
-            BinaryOp::LessEq => "<=",
-            BinaryOp::Greater => ">",
-            BinaryOp::GreaterEq => ">=",
-
-            BinaryOp::And => "&&",
-            BinaryOp::Or => "||",
-        };
-        f.write_str(s)
-    }
-}
-
-impl Display for UnaryOp {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = match self {
-            UnaryOp::Neg => "-",
-            UnaryOp::Not => "!",
-        };
-        f.write_str(s)
-    }
-}
-
-impl Display for BorrowOp {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = match self {
-            BorrowOp::Ref => "&",
-            BorrowOp::RefMut => "&mut",
-        };
-        f.write_str(s)
-    }
+#[derive(Debug, Clone, PartialEq)]
+pub struct Val {
+    name: Spanned<Ident>,
+    ty: Option<Type>,
+    expr: Spanned<Expr>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
-    Val {
-        name: Spanned<Ident>,
-        ty: Option<Type>,
-        expr: Spanned<Expr>,
+    Val(Val),
+    Assign {
+        target: Spanned<Ident>,
+        value: Spanned<Expr>,
+    },
+    While {
+        condition: Spanned<Expr>,
+        body: Box<Spanned<Stmt>>,
     },
 }
 
@@ -190,4 +197,10 @@ pub struct Func {
     pub params: Vec<Spanned<FuncParam>>,
     pub ty: Option<Spanned<Type>>,
     pub expr: Spanned<Expr>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Decl {
+    Val(Val),
+    Func(Func),
 }
