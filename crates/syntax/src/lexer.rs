@@ -1,68 +1,66 @@
-use std::fmt;
-
 use crate::span::{SourceId, Span, Spanned};
 use internment::Intern;
 use miette::Diagnostic;
+use std::fmt;
 use thiserror::Error;
 
-#[derive(Debug, Clone, Default, PartialEq, Error, Diagnostic)]
+#[derive(Debug, Clone, PartialEq, Error, Diagnostic)]
 pub enum LexError {
     #[error("invalid integer literal: {0}")]
     #[diagnostic(
         code(lex::invalid_int),
         help("ensure the integer is within valid range (0 to {})", usize::MAX)
     )]
-    InvalidInt(String),
+    InvalidInt(String, #[label("here")] Span),
 
     #[error("invalid float literal: {0}")]
     #[diagnostic(
         code(lex::invalid_float),
         help("check the float format (e.g., 1.0, 1e10, .5)")
     )]
-    InvalidFloat(String),
+    InvalidFloat(String, #[label("here")] Span),
 
     #[error("character literal cannot be empty")]
     #[diagnostic(
         code(lex::empty_char),
         help("character literals must contain exactly one character, e.g., 'a'")
     )]
-    EmptyChar,
+    EmptyChar(#[label("here")] Span),
 
     #[error("character literal must contain exactly one character")]
     #[diagnostic(
         code(lex::multi_char),
         help("use a string literal for multiple characters, or keep only one character")
     )]
-    MultiChar,
+    MultiChar(#[label("here")] Span),
 
     #[error("unknown escape sequence: '\\{0}'")]
     #[diagnostic(
         code(lex::unknown_escape),
         help("valid escape sequences are: \\', \\\", \\\\, \\n, \\r, \\t, \\0")
     )]
-    UnknownEscape(char),
+    UnknownEscape(char, #[label("here")] Span),
 
     #[error("unterminated character literal")]
     #[diagnostic(
         code(lex::unterminated_char),
         help("character literals must end with a closing single quote '")
     )]
-    UnterminatedChar,
+    UnterminatedChar(#[label("here")] Span),
 
     #[error("invalid character in number literal")]
     #[diagnostic(
         code(lex::invalid_number_char),
         help("numbers can only contain digits, dots, and exponent notation (e/E)")
     )]
-    InvalidNumberChar,
+    InvalidNumberChar(#[label("here")] Span),
 
-    #[default]
     #[error("invalid token")]
     #[diagnostic(
         code(lex::invalid_token),
         help("this character or sequence is not recognized")
     )]
-    InvalidToken,
+    InvalidToken(#[label("here")] Span),
 }
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
@@ -87,7 +85,6 @@ pub enum Token {
     KwDo,
     KwMod,
     KwDiv,
-
     Comma,
     Cons, // ::
     Eq,
@@ -107,14 +104,11 @@ pub enum Token {
     Plus,
     Minus,
     Star,
-
     Real(f64),
     Int(usize),
     Bool(bool),
     Char(char),
-
     Ident(Intern<String>),
-
     Eof,
 }
 
@@ -164,7 +158,7 @@ impl fmt::Display for Token {
             Token::Bool(v) => write!(f, "{v}"),
             Token::Char(c) => write!(f, "'{c}'"),
             Token::Ident(id) => write!(f, "{id}"),
-            Token::Eof => write!(f, "<eof>"),
+            Token::Eof => write!(f, ""),
         }
     }
 }
@@ -188,8 +182,8 @@ impl<'src> Lexer<'src> {
 
     fn next_char(&mut self) -> Option<(usize, char)> {
         let result = self.chars.next();
-        if let Some((pos, _)) = result {
-            self.current_pos = pos;
+        if let Some((pos, c)) = result {
+            self.current_pos = pos + c.len_utf8();
         }
         result
     }
@@ -212,7 +206,7 @@ impl<'src> Lexer<'src> {
         }
     }
 
-    pub fn tokenize(mut self) -> Result<Vec<Spanned<Token>>, Vec<Spanned<LexError>>> {
+    pub fn tokenize(mut self) -> Result<Vec<Spanned<Token>>, Vec<LexError>> {
         let mut tokens = Vec::new();
         let mut errors = Vec::new();
 
@@ -261,30 +255,33 @@ impl<'src> Lexer<'src> {
                 '>' => self.lex_gt(),
                 '&' => self.lex_and(),
                 '|' => self.lex_or(),
-                '\'' => self.lex_char_literal(),
-                '0'..='9' => self.lex_number(),
+                '\'' => self.lex_char_literal(start),
+                '0'..='9' => self.lex_number(start),
                 '.' => {
                     // Check if this is a float starting with a dot
                     if matches!(self.chars.clone().nth(1), Some((_, '0'..='9'))) {
-                        self.lex_number()
+                        self.lex_number(start)
                     } else {
                         self.next_char();
-                        Err(LexError::InvalidToken)
+                        Err(Span::new(self.src_id, start..self.current_pos))
                     }
                 }
                 'a'..='z' | 'A'..='Z' | '_' => self.lex_ident(),
                 _ => {
                     self.next_char();
-                    Err(LexError::InvalidToken)
+                    Err(Span::new(self.src_id, start..self.current_pos))
                 }
             };
 
-            let end = self.current_pos + 1;
+            let end = self.current_pos;
             let span = Span::new(self.src_id, start..end);
 
             match result {
                 Ok(token) => tokens.push((token, span)),
-                Err(error) => errors.push((error, span)),
+                Err(error_span) => {
+                    // If lex functions return Span, convert to LexError with span
+                    errors.push(LexError::InvalidToken(error_span));
+                }
             }
         }
 
@@ -299,7 +296,7 @@ impl<'src> Lexer<'src> {
         }
     }
 
-    fn lex_colon(&mut self) -> Result<Token, LexError> {
+    fn lex_colon(&mut self) -> Result<Token, Span> {
         self.next_char(); // consume ':'
         match self.peek_char() {
             Some(':') => {
@@ -314,7 +311,7 @@ impl<'src> Lexer<'src> {
         }
     }
 
-    fn lex_less(&mut self) -> Result<Token, LexError> {
+    fn lex_less(&mut self) -> Result<Token, Span> {
         self.next_char(); // consume '<'
         match self.peek_char() {
             Some('>') => {
@@ -329,7 +326,7 @@ impl<'src> Lexer<'src> {
         }
     }
 
-    fn lex_gt(&mut self) -> Result<Token, LexError> {
+    fn lex_gt(&mut self) -> Result<Token, Span> {
         self.next_char(); // consume '>'
         if self.peek_char() == Some('=') {
             self.next_char(); // consume '='
@@ -339,7 +336,7 @@ impl<'src> Lexer<'src> {
         }
     }
 
-    fn lex_and(&mut self) -> Result<Token, LexError> {
+    fn lex_and(&mut self) -> Result<Token, Span> {
         self.next_char(); // consume '&'
         if self.peek_char() == Some('&') {
             self.next_char(); // consume second '&'
@@ -349,27 +346,28 @@ impl<'src> Lexer<'src> {
         }
     }
 
-    fn lex_or(&mut self) -> Result<Token, LexError> {
-        self.next_char(); // consume '|' 
+    fn lex_or(&mut self) -> Result<Token, Span> {
+        let start = self.current_pos;
+        self.next_char(); // consume '|'
         if self.peek_char() == Some('|') {
             self.next_char(); // consume second '|'
             Ok(Token::Or)
         } else {
-            Err(LexError::InvalidToken)
+            Err(Span::new(self.src_id, start..self.current_pos))
         }
     }
 
-    fn lex_char_literal(&mut self) -> Result<Token, LexError> {
+    fn lex_char_literal(&mut self, start: usize) -> Result<Token, Span> {
         self.next_char(); // consume opening '
 
         let Some((_, c)) = self.next_char() else {
-            return Err(LexError::UnterminatedChar);
+            return Err(Span::new(self.src_id, start..self.current_pos));
         };
 
         let result = if c == '\\' {
             // Handle escape sequence
             let Some((_, esc)) = self.next_char() else {
-                return Err(LexError::UnterminatedChar);
+                return Err(Span::new(self.src_id, start..self.current_pos));
             };
             match esc {
                 '\'' => '\'',
@@ -379,23 +377,25 @@ impl<'src> Lexer<'src> {
                 'r' => '\r',
                 't' => '\t',
                 '0' => '\0',
-                _ => return Err(LexError::UnknownEscape(esc)),
+                _ => {
+                    return Err(Span::new(self.src_id, start..self.current_pos));
+                }
             }
         } else if c == '\'' {
-            return Err(LexError::EmptyChar);
+            return Err(Span::new(self.src_id, start..self.current_pos));
         } else {
             c
         };
 
         match self.next_char() {
             Some((_, '\'')) => Ok(Token::Char(result)),
-            Some(_) => Err(LexError::MultiChar),
-            None => Err(LexError::UnterminatedChar),
+            Some(_) => Err(Span::new(self.src_id, start..self.current_pos)),
+            None => Err(Span::new(self.src_id, start..self.current_pos)),
         }
     }
 
-    fn lex_number(&mut self) -> Result<Token, LexError> {
-        let start_pos = self.current_pos;
+    fn lex_number(&mut self, start: usize) -> Result<Token, Span> {
+        let start_pos = self.peek().unwrap().0;
         let mut has_dot = false;
         let mut has_exponent = false;
 
@@ -413,7 +413,6 @@ impl<'src> Lexer<'src> {
                     has_dot = true;
                     has_exponent = true;
                     self.next_char();
-
                     if matches!(self.peek_char(), Some('+' | '-')) {
                         self.next_char();
                     }
@@ -422,24 +421,24 @@ impl<'src> Lexer<'src> {
             }
         }
 
-        let end_pos = self.current_pos + 1;
+        let end_pos = self.current_pos;
         let num_str = &self.source[start_pos..end_pos];
 
         if has_dot || has_exponent {
             num_str
                 .parse::<f64>()
                 .map(Token::Real)
-                .map_err(|_| LexError::InvalidFloat(num_str.to_string()))
+                .map_err(|_| Span::new(self.src_id, start..end_pos))
         } else {
             num_str
                 .parse::<usize>()
                 .map(Token::Int)
-                .map_err(|_| LexError::InvalidInt(num_str.to_string()))
+                .map_err(|_| Span::new(self.src_id, start..end_pos))
         }
     }
 
-    fn lex_ident(&mut self) -> Result<Token, LexError> {
-        let start_pos = self.current_pos;
+    fn lex_ident(&mut self) -> Result<Token, Span> {
+        let start_pos = self.peek().unwrap().0;
 
         while let Some((_, c)) = self.peek() {
             if c.is_alphanumeric() || c == '_' {
@@ -449,9 +448,8 @@ impl<'src> Lexer<'src> {
             }
         }
 
-        let end_pos = self.current_pos + 1;
+        let end_pos = self.current_pos;
         let ident = &self.source[start_pos..end_pos];
-
         Ok(self.classify_ident(ident))
     }
 
@@ -492,7 +490,6 @@ mod tests {
         let src_id = SourceId::default();
         let lexer = Lexer::new(src_id, "( ) , = ::");
         let tokens = lexer.tokenize().unwrap();
-
         assert_eq!(tokens.len(), 6); // 5 tokens + EOF
         assert_eq!(tokens[0].0, Token::LParen);
         assert_eq!(tokens[1].0, Token::RParen);
@@ -507,7 +504,6 @@ mod tests {
         let src_id = SourceId::default();
         let lexer = Lexer::new(src_id, "42 3.14 .5 1e10 2.5e-3");
         let tokens = lexer.tokenize().unwrap();
-
         assert_eq!(tokens[0].0, Token::Int(42));
         assert_eq!(tokens[2].0, Token::Real(0.5));
     }
@@ -517,7 +513,6 @@ mod tests {
         let src_id = SourceId::default();
         let lexer = Lexer::new(src_id, "fun if then else true false");
         let tokens = lexer.tokenize().unwrap();
-
         assert_eq!(tokens[0].0, Token::KwFun);
         assert_eq!(tokens[1].0, Token::KwIf);
         assert_eq!(tokens[2].0, Token::KwThen);
@@ -531,7 +526,6 @@ mod tests {
         let src_id = SourceId::default();
         let lexer = Lexer::new(src_id, r"'a' '\n' '\'' '\\'");
         let tokens = lexer.tokenize().unwrap();
-
         assert_eq!(tokens[0].0, Token::Char('a'));
         assert_eq!(tokens[1].0, Token::Char('\n'));
         assert_eq!(tokens[2].0, Token::Char('\''));

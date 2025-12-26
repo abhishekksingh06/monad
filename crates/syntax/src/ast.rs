@@ -4,7 +4,7 @@ use crate::span::Spanned;
 use internment::Intern;
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Ident(Intern<String>);
+pub struct Ident(pub Intern<String>);
 
 impl Display for Ident {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -63,6 +63,7 @@ impl Display for Literal {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinaryOp {
+    Add,
     Sub,
     Mul,
     Div,
@@ -94,6 +95,7 @@ pub enum BorrowOp {
 impl Display for BinaryOp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
+            BinaryOp::Add => "+",
             BinaryOp::Sub => "-",
             BinaryOp::Mul => "*",
             BinaryOp::Div => "div",
@@ -135,7 +137,7 @@ impl Display for BorrowOp {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
-    Value(Literal),
+    Literal(Literal),
     Local(Ident),
     Unary {
         op: Spanned<UnaryOp>,

@@ -1,12 +1,10 @@
-use std::usize;
-
 use miette::{Diagnostic, SourceSpan};
 use thiserror::Error;
 
 use crate::{
-    ast::{self, Literal},
+    ast::{BinaryOp, BorrowOp, Expr, Ident, Literal, Type, UnaryOp},
     lexer::Token,
-    span::{Span, Spanned},
+    span::{Span, Spanned, SpannedExt},
 };
 
 #[derive(Debug, Error, Diagnostic)]
@@ -30,15 +28,41 @@ pub enum ParseError {
     )]
     UnexpectedEOF,
 
-    #[error("expected a literal, found {found}")]
+    #[error("expected type, found {found}")]
     #[diagnostic(
-        code(parse::expected_literal),
-        help("use a valid literal such as an integer, float, boolean, or character")
+        code(parse::expected_type),
+        help("a type name was expected here (e.g. int, bool, real, char)")
     )]
-    ExpectedLiteral {
+    ExpectedType {
         found: Token,
-        #[label("not a literal")]
+        #[label("type expected here")]
         span: SourceSpan,
+    },
+
+    #[error("expected expression")]
+    #[diagnostic(
+        code(parse::expected_primary),
+        help("expected a literal, identifier, or parenthesized expression")
+    )]
+    ExpectedPrimary {
+        #[label("here")]
+        span: SourceSpan,
+    },
+
+    #[error("expected `{expected}`")]
+    #[diagnostic(
+        code(parse::expected_delimiter),
+        help("add the missing `{expected}` to close this `{opened}`")
+    )]
+    ExpectedDelimiter {
+        expected: Token,
+        opened: Token,
+
+        #[label("opened here")]
+        open_span: SourceSpan,
+
+        #[label("parser reached here")]
+        end_span: SourceSpan,
     },
 }
 
@@ -92,21 +116,191 @@ impl Parser {
         }
     }
 
-    fn parse_literal(&mut self) -> ParserResult<Spanned<Literal>> {
+    fn parse_type(&mut self) -> ParserResult<Spanned<Type>> {
         let (token, span) = self.advance();
         match token {
-            Token::Int(v) => Ok((Literal::Int(v), span)),
-            Token::Real(x) => Ok((Literal::Real(x), span)),
-            Token::Char(c) => Ok((Literal::Char(c), span)),
-            Token::LParen if *self.peek() == Token::RParen => {
-                let (_, other_span) = self.advance();
-                Ok((Literal::Unit, span.merge(other_span)))
-            }
-            _ => Err(ParseError::ExpectedLiteral {
+            Token::KwInt => Ok((Type::Int, span)),
+            Token::KwUnit => Ok((Type::Unit, span)),
+            Token::KwReal => Ok((Type::Real, span)),
+            Token::KwChar => Ok((Type::Char, span)),
+            _ => Err(ParseError::ExpectedType {
                 found: token,
                 span: span.into(),
             }),
         }
     }
-}
 
+    fn parse_primary(&mut self) -> ParserResult<Spanned<Expr>> {
+        let (token, span) = self.advance();
+
+        match token {
+            Token::Int(v) => Ok((Expr::Literal(Literal::Int(v)), span)),
+            Token::Real(x) => Ok((Expr::Literal(Literal::Real(x)), span)),
+            Token::Char(c) => Ok((Expr::Literal(Literal::Char(c)), span)),
+            Token::Ident(s) => Ok((Expr::Local(Ident(s)), span)),
+
+            Token::LParen => {
+                if *self.peek() == Token::RParen {
+                    let (_, r_span) = self.advance();
+                    let span = span.merge(r_span);
+                    return Ok((Expr::Literal(Literal::Unit), span));
+                }
+
+                let (expr, expr_span) = self.parse_expr()?;
+
+                match self.peek() {
+                    Token::RParen => {
+                        let (_, r_span) = self.advance();
+                        let span = span.merge(expr_span).merge(r_span);
+                        Ok((expr, span))
+                    }
+                    _ => Err(ParseError::ExpectedDelimiter {
+                        opened: Token::LParen,
+                        expected: Token::RParen,
+                        open_span: span.into(),
+                        end_span: expr_span.into(),
+                    }),
+                }
+            }
+
+            _ => Err(ParseError::ExpectedPrimary { span: span.into() }),
+        }
+    }
+
+    fn parse_unary(&mut self) -> ParserResult<Spanned<Expr>> {
+        match self.peek() {
+            Token::KwNot | Token::Tilde => {
+                let op = match self.peek() {
+                    Token::KwNot => UnaryOp::Not,
+                    Token::Tilde => UnaryOp::Neg,
+                    _ => unreachable!(),
+                };
+                let (_, op_span) = self.advance();
+                let (expr, expr_span) = self.parse_unary()?;
+                let span = op_span.clone().merge(expr_span.clone());
+                Ok((
+                    Expr::Unary {
+                        op: (op, op_span),
+                        expr: Box::new((expr, expr_span)),
+                    },
+                    span,
+                ))
+            }
+            Token::And => {
+                let (_, op_span) = self.advance();
+                let (op, op_span) = if *self.peek() == Token::KwMut {
+                    let (_, mut_span) = self.advance();
+                    (BorrowOp::RefMut, op_span.merge(mut_span))
+                } else {
+                    (BorrowOp::Ref, op_span)
+                };
+                let (expr, expr_span) = self.parse_unary()?;
+                let span = op_span.clone().merge(expr_span.clone());
+                Ok((
+                    Expr::Borrow {
+                        op: (op, op_span),
+                        expr: Box::new((expr, expr_span)),
+                    },
+                    span,
+                ))
+            }
+            _ => self.parse_primary(),
+        }
+    }
+
+    #[inline]
+    pub fn binary(
+        left: Spanned<Expr>,
+        op: BinaryOp,
+        op_span: Span,
+        right: Spanned<Expr>,
+    ) -> Spanned<Expr> {
+        let span = left.span().merge(right.span());
+        (
+            Expr::Binary {
+                left: Box::new(left),
+                right: Box::new(right),
+                op: (op, op_span),
+            },
+            span,
+        )
+    }
+
+    fn parse_multiplicative(&mut self) -> Result<Spanned<Expr>, ParseError> {
+        let mut left = self.parse_unary()?;
+        loop {
+            let op = match self.peek() {
+                Token::Star => BinaryOp::Mul,
+                Token::KwDiv => BinaryOp::Div,
+                Token::KwMod => BinaryOp::Rem,
+                _ => break,
+            };
+            let (_, op_span) = self.advance();
+            let right = self.parse_unary()?;
+            left = Self::binary(left, op, op_span, right);
+        }
+        Ok(left)
+    }
+
+    fn parse_additive(&mut self) -> Result<Spanned<Expr>, ParseError> {
+        let mut left = self.parse_multiplicative()?;
+        loop {
+            let op = match self.peek() {
+                Token::Plus => BinaryOp::And,
+                Token::Minus => BinaryOp::Sub,
+                _ => break,
+            };
+            let (_, op_span) = self.advance();
+            let right = self.parse_multiplicative()?;
+            left = Self::binary(left, op, op_span, right);
+        }
+        Ok(left)
+    }
+
+    fn parse_comparison(&mut self) -> Result<Spanned<Expr>, ParseError> {
+        let mut left = self.parse_additive()?;
+        loop {
+            let op = match self.peek() {
+                Token::Gt => BinaryOp::Greater,
+                Token::GtEq => BinaryOp::GreaterEq,
+                Token::Less => BinaryOp::Less,
+                Token::LessEq => BinaryOp::LessEq,
+                Token::NotEq => BinaryOp::NotEq,
+                Token::Eq => BinaryOp::Eq,
+                _ => break,
+            };
+            let (_, op_span) = self.advance();
+            let right = self.parse_additive()?;
+            left = Self::binary(left, op, op_span, right);
+        }
+        Ok(left)
+    }
+
+    fn parse_and_op(&mut self) -> Result<Spanned<Expr>, ParseError> {
+        let mut left = self.parse_comparison()?;
+        while let Token::AndAnd = self.peek() {
+            let (_, op_span) = self.advance();
+            let right = self.parse_comparison()?;
+            left = Self::binary(left, BinaryOp::And, op_span, right);
+        }
+        Ok(left)
+    }
+
+    fn parse_or_op(&mut self) -> Result<Spanned<Expr>, ParseError> {
+        let mut left = self.parse_and_op()?;
+        while let Token::Or = self.peek() {
+            let (_, op_span) = self.advance();
+            let right = self.parse_and_op()?;
+            left = Self::binary(left, BinaryOp::Or, op_span, right);
+        }
+        Ok(left)
+    }
+
+    fn parse_expr(&mut self) -> Result<Spanned<Expr>, ParseError> {
+        self.parse_or_op()
+    }
+
+    pub fn parse_code(&mut self) -> Result<Spanned<Expr>, ParseError> {
+        self.parse_or_op()
+    }
+}

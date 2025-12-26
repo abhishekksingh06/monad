@@ -1,1 +1,3 @@
-fn main() {}
+fn main() {
+    if if true { true } else { false } {}
+}
