@@ -58,7 +58,7 @@ pub enum Token {
     KwFun,
     KwInt,
     KwBool,
-    KwFloat,
+    KwReal,
     KwChar,
     KwUnit,
     Comma,
@@ -66,7 +66,7 @@ pub enum Token {
     Eq,
     LParen,
     RParen,
-    Float(f64),
+    Real(f64),
     Int(usize),
     Bool(bool),
     Char(char),
@@ -173,7 +173,7 @@ impl<'src> Lexer<'src> {
                         "fun" => Token::KwFun,
                         "int" => Token::KwInt,
                         "bool" => Token::KwBool,
-                        "float" => Token::KwFloat,
+                        "real" => Token::KwReal,
                         "char" => Token::KwChar,
                         "unit" => Token::KwUnit,
                         "true" => Token::Bool(true),
@@ -250,7 +250,7 @@ impl<'src> Lexer<'src> {
         }
 
         if has_dot {
-            s.parse::<f64>().map(Token::Float).map_err(LexError::from)
+            s.parse::<f64>().map(Token::Real).map_err(LexError::from)
         } else {
             s.parse::<usize>().map(Token::Int).map_err(LexError::from)
         }

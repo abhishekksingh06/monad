@@ -43,27 +43,15 @@ pub enum Expr {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Pattern {
+pub enum FuncParam {
     Ident(Ident),
-    Wildcard,
-    Typed { pattern: Box<Self>, ty: Type },
-    // Future pattern forms (not yet supported):
-    // - Tuple patterns for destructuring multiple values
-    // - Constructor patterns for algebraic data types
-    // - Reference / borrow patterns for ownership-aware matching
-    //
-    // These are intentionally deferred until composite types,
-    // ADTs, and ownership semantics are introduced.
-    //
-    // Tuple(Vec<Self>),
-    // Constructor { name: Ident, args: Vec<Self> },
-    // Ref(Box<Self>),
+    Typed { param: Box<FuncParam>, ty: Type },
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Func {
     pub name: Spanned<Ident>,
-    pub params: Vec<Spanned<Pattern>>,
+    pub params: Vec<Spanned<FuncParam>>,
     pub ty: Option<Spanned<Type>>,
     pub expr: Expr,
 }
