@@ -1,3 +1,5 @@
+use std::fmt;
+
 use crate::span::{SourceId, Span, Spanned};
 use internment::Intern;
 use miette::Diagnostic;
@@ -83,6 +85,8 @@ pub enum Token {
     KwMut,
     KwWhile,
     KwDo,
+    KwMod,
+    KwDiv,
 
     Comma,
     Cons, // ::
@@ -99,6 +103,10 @@ pub enum Token {
     AndAnd,
     Or,
     And,
+    Tilde,
+    Plus,
+    Minus,
+    Star,
 
     Real(f64),
     Int(usize),
@@ -108,6 +116,57 @@ pub enum Token {
     Ident(Intern<String>),
 
     Eof,
+}
+
+impl fmt::Display for Token {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Token::KwFun => write!(f, "fun"),
+            Token::KwInt => write!(f, "int"),
+            Token::KwBool => write!(f, "bool"),
+            Token::KwReal => write!(f, "real"),
+            Token::KwChar => write!(f, "char"),
+            Token::KwUnit => write!(f, "unit"),
+            Token::KwVal => write!(f, "val"),
+            Token::KwLet => write!(f, "let"),
+            Token::KwIn => write!(f, "in"),
+            Token::KwEnd => write!(f, "end"),
+            Token::KwIf => write!(f, "if"),
+            Token::KwThen => write!(f, "then"),
+            Token::KwElse => write!(f, "else"),
+            Token::KwNot => write!(f, "not"),
+            Token::KwMut => write!(f, "mut"),
+            Token::KwWhile => write!(f, "while"),
+            Token::KwDo => write!(f, "do"),
+            Token::KwMod => write!(f, "mod"),
+            Token::KwDiv => write!(f, "div"),
+            Token::Comma => write!(f, ","),
+            Token::Cons => write!(f, "::"),
+            Token::Eq => write!(f, "="),
+            Token::NotEq => write!(f, "<>"),
+            Token::Colon => write!(f, ":"),
+            Token::ColonEq => write!(f, ":="),
+            Token::LParen => write!(f, "("),
+            Token::RParen => write!(f, ")"),
+            Token::Gt => write!(f, ">"),
+            Token::GtEq => write!(f, ">="),
+            Token::Less => write!(f, "<"),
+            Token::LessEq => write!(f, "<="),
+            Token::AndAnd => write!(f, "&&"),
+            Token::Or => write!(f, "or"),
+            Token::And => write!(f, "and"),
+            Token::Tilde => write!(f, "~"),
+            Token::Plus => write!(f, "+"),
+            Token::Minus => write!(f, "-"),
+            Token::Star => write!(f, "*"),
+            Token::Real(v) => write!(f, "{v}"),
+            Token::Int(v) => write!(f, "{v}"),
+            Token::Bool(v) => write!(f, "{v}"),
+            Token::Char(c) => write!(f, "'{c}'"),
+            Token::Ident(id) => write!(f, "{id}"),
+            Token::Eof => write!(f, "<eof>"),
+        }
+    }
 }
 
 pub struct Lexer<'src> {
@@ -169,6 +228,10 @@ impl<'src> Lexer<'src> {
                     self.next_char();
                     Ok(Token::Comma)
                 }
+                '~' => {
+                    self.next_char();
+                    Ok(Token::Tilde)
+                }
                 '(' => {
                     self.next_char();
                     Ok(Token::LParen)
@@ -180,6 +243,18 @@ impl<'src> Lexer<'src> {
                 '=' => {
                     self.next_char();
                     Ok(Token::Eq)
+                }
+                '+' => {
+                    self.next_char();
+                    Ok(Token::Plus)
+                }
+                '-' => {
+                    self.next_char();
+                    Ok(Token::Minus)
+                }
+                '*' => {
+                    self.next_char();
+                    Ok(Token::Star)
                 }
                 ':' => self.lex_colon(),
                 '<' => self.lex_less(),
@@ -401,6 +476,8 @@ impl<'src> Lexer<'src> {
             "mut" => Token::KwMut,
             "do" => Token::KwDo,
             "while" => Token::KwWhile,
+            "mod" => Token::KwMod,
+            "div" => Token::KwDiv,
             _ => Token::Ident(Intern::new(ident.to_string())),
         }
     }

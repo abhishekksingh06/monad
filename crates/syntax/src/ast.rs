@@ -27,6 +27,19 @@ pub enum Type {
     Unit,
 }
 
+impl Display for Type {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Type::Int => "int",
+            Type::Char => "char",
+            Type::Bool => "bool",
+            Type::Float => "float",
+            Type::Unit => "()",
+        };
+        f.write_str(s)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Int(usize),
@@ -36,10 +49,133 @@ pub enum Value {
     Unit,
 }
 
+impl Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Value::Int(v) => write!(f, "{v}"),
+            Value::Char(c) => write!(f, "'{c}'"),
+            Value::Bool(b) => write!(f, "{b}"),
+            Value::Float(x) => write!(f, "{x}"),
+            Value::Unit => write!(f, "()"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BinaryOp {
+    Sub,
+    Mul,
+    Div,
+    Rem,
+
+    Eq,
+    NotEq,
+    Less,
+    LessEq,
+    Greater,
+    GreaterEq,
+
+    And,
+    Or,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnaryOp {
+    Neg,
+    Not,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BorrowOp {
+    Ref,    // &x
+    RefMut, // &mut x
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Value(Value),
     Local(Ident),
+    Unary {
+        op: Spanned<UnaryOp>,
+        expr: Box<Spanned<Expr>>,
+    },
+    Borrow {
+        op: Spanned<BorrowOp>,
+        expr: Box<Spanned<Expr>>,
+    },
+    Apply {
+        callee: Box<Spanned<Expr>>,
+        arg: Box<Spanned<Expr>>,
+    },
+    Binary {
+        left: Box<Spanned<Self>>,
+        op: Spanned<BinaryOp>,
+        right: Box<Spanned<Self>>,
+    },
+    Let {
+        stmts: Vec<Spanned<Stmt>>,
+        expr: Box<Spanned<Self>>,
+    },
+    While {
+        condition: Box<Spanned<Self>>,
+        expr: Box<Spanned<Self>>,
+    },
+    If {
+        condition: Box<Spanned<Self>>,
+        then_expr: Box<Spanned<Expr>>,
+        else_expr: Box<Spanned<Self>>,
+    },
+}
+
+impl Display for BinaryOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            BinaryOp::Sub => "-",
+            BinaryOp::Mul => "*",
+            BinaryOp::Div => "/",
+            BinaryOp::Rem => "%",
+
+            BinaryOp::Eq => "==",
+            BinaryOp::NotEq => "!=",
+            BinaryOp::Less => "<",
+            BinaryOp::LessEq => "<=",
+            BinaryOp::Greater => ">",
+            BinaryOp::GreaterEq => ">=",
+
+            BinaryOp::And => "&&",
+            BinaryOp::Or => "||",
+        };
+        f.write_str(s)
+    }
+}
+
+impl Display for UnaryOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            UnaryOp::Neg => "-",
+            UnaryOp::Not => "!",
+        };
+        f.write_str(s)
+    }
+}
+
+impl Display for BorrowOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            BorrowOp::Ref => "&",
+            BorrowOp::RefMut => "&mut",
+        };
+        f.write_str(s)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Stmt {
+    Val {
+        name: Spanned<Ident>,
+        ty: Option<Type>,
+        expr: Spanned<Expr>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -53,5 +189,5 @@ pub struct Func {
     pub name: Spanned<Ident>,
     pub params: Vec<Spanned<FuncParam>>,
     pub ty: Option<Spanned<Type>>,
-    pub expr: Expr,
+    pub expr: Spanned<Expr>,
 }
